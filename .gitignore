@@ -1,0 +1,31 @@
+/target
+**/*.rs.bk
+Cargo.lock
+
+# Flutter / Dart
+/app/.dart_tool/
+/app/.flutter-plugins*
+/app/build/
+/app/ios/Pods/
+/app/ios/.symlinks/
+/app/android/.gradle/
+/app/android/local.properties
+*.iml
+
+# Map data and build artefacts, far too big for git
+/data/
+*.pbf
+*.pmtiles
+*.mbtiles
+*.graph
+
+# Signing material. Never commit these.
+*.p12
+*.mobileprovision
+*.cer
+/app/ios/Runner/GoogleService-Info.plist
+
+# Local scratch
+/out/
+*.geojson
+.DS_Store

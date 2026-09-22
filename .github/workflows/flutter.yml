@@ -1,0 +1,32 @@
+name: flutter
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          # Kept in step with mise.toml. Change both together.
+          flutter-version: 3.47.5
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: app
+        run: flutter analyze
+
+      # Widget tests run headless, with no Android SDK and no device, which is
+      # what makes the draw-mode behaviour testable in CI at all.
+      - name: Test
+        working-directory: app
+        run: flutter test

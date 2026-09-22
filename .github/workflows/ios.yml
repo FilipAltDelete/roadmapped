@@ -1,0 +1,52 @@
+# Builds the iOS app on a macOS runner, because the development machine is Linux.
+#
+# Free-tier reality: this produces an unsigned .app you install with SideStore or
+# Sideloadly, and the signature it gets lasts seven days. There is no TestFlight
+# and no App Store on a free Apple Developer account.
+#
+# Cost note: macOS runners bill at ten times the Linux rate on private repos.
+# Triggered by hand rather than on every push for that reason.
+name: ios
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: subosito/flutter-action@v2
+        with:
+          # Kept in step with mise.toml. Change both together.
+          flutter-version: 3.47.5
+          channel: stable
+          cache: true
+
+      - name: Build the Rust core for device
+        run: cargo build --release --manifest-path crates/sketch-route/Cargo.toml --target aarch64-apple-ios
+
+      - name: Build the app
+        working-directory: app
+        # Unsigned: signing happens on the phone via SideStore under a free account.
+        run: flutter build ios --release --no-codesign
+
+      - name: Package
+        working-directory: app/build/ios/iphoneos
+        run: |
+          mkdir -p Payload
+          cp -R Runner.app Payload/
+          zip -qry sketch-route.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sketch-route-ipa
+          path: app/build/ios/iphoneos/sketch-route.ipa
+          retention-days: 14

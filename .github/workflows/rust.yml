@@ -1,0 +1,32 @@
+name: rust
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --manifest-path crates/sketch-route/Cargo.toml --check
+      - run: cargo clippy --manifest-path crates/sketch-route/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path crates/sketch-route/Cargo.toml
+
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Printed into the job log on every run, so a change in matching quality
+      # shows up in the diff of two builds rather than being discovered later.
+      - run: cargo run --release --quiet --example eval --manifest-path crates/sketch-route/Cargo.toml
