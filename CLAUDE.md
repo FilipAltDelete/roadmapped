@@ -4,15 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-The Rust matching engine in `crates/sketch-route/` is written and tested. The Flutter client in
-`app/` is scaffolded with the drawing surface built and tested, but no map under it yet.
-`ROADMAP.md` is the source of truth for scope and phasing.
+The Rust matching engine in `crates/sketch-route/` is written and tested, against a synthetic
+grid: there is no OSM importer yet, so it has never seen real data. The Flutter client in `app/`
+has the drawing surface built and tested, with MapLibre rendering underneath it. The two halves
+are not connected. There is no flutter_rust_bridge seam, so nothing calls the matcher and the
+line the app draws back is the sketch itself, not a route. `ROADMAP.md` is the source of truth
+for scope and phasing, but its checkboxes are stale and the code has overtaken them in places.
 
 The full Android toolchain is installed and verified by an actual debug APK build. Flutter, Java
 and the Android SDK paths are all pinned in `mise.toml`, so entering the directory sets up the
 environment. Nothing needed root. See `docs/setup.md`.
 
-iOS has never been built. The workflow exists but has not run once.
+iOS builds. The `ios` workflow produces an unsigned arm64 .ipa on a macOS runner, and all three
+workflows pass. Nothing has been signed or installed on a phone yet: SideStore is not set up.
 
 ## Commands
 
@@ -109,10 +113,13 @@ passing for the wrong reason, or gets relaxed, the app no longer does the one th
 
 ## The client
 
-`app/lib/main.dart` is the drawing surface. There is no map under it on purpose. Finger drawing is
-the risky part of this app and does not need a map to develop, so the gesture handling and point
-capture are built against a blank canvas first. When MapLibre arrives, the only new problem is the
-one that genuinely needs a map, which is drawing competing with pan and zoom.
+`app/lib/main.dart` is the drawing surface, with MapLibre rendering under it. The gesture handling
+and point capture were deliberately built against a blank canvas first, because finger drawing is
+the risky part of this app and did not need a map to develop. The map arrived afterwards, leaving
+only the problem that genuinely needs one: drawing competing with pan and zoom.
+
+The basemap is a remote style over the network, so the app is online-only for now. PMTiles is what
+makes it work offline, and that is still ahead.
 
 **Draw mode is a deliberate toggle, not an inferred gesture.** With a map underneath, a drag means
 either pan or draw and never both. Inferring it from pressure or timing feels clever and fails

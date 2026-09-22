@@ -4,8 +4,13 @@
 # Sideloadly, and the signature it gets lasts seven days. There is no TestFlight
 # and no App Store on a free Apple Developer account.
 #
-# Cost note: macOS runners bill at ten times the Linux rate on private repos.
-# Triggered by hand rather than on every push for that reason.
+# Cost note: standard macOS runners are free and unmetered while this repo is
+# public. They bill at ten times the Linux rate on private repos, which was the
+# original reason this job is manual.
+#
+# It stays on workflow_dispatch anyway: the daily loop runs on Android and the
+# iOS loop is weekly by design, so there is nothing to gain from building this
+# on every push. See docs/setup.md.
 name: ios
 
 on:
@@ -43,10 +48,10 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R Runner.app Payload/
-          zip -qry sketch-route.ipa Payload
+          zip -qry roadmapped.ipa Payload
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sketch-route-ipa
-          path: app/build/ios/iphoneos/sketch-route.ipa
+          name: roadmapped-ipa
+          path: app/build/ios/iphoneos/roadmapped.ipa
           retention-days: 14

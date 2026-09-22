@@ -86,7 +86,7 @@ A free Apple Developer account signs an app for seven days at a time. After that
 it stops launching until it is re-signed.
 
 1. Trigger the `ios` workflow in GitHub Actions by hand.
-2. Download the `sketch-route-ipa` artefact.
+2. Download the `roadmapped-ipa` artefact.
 3. Install with [SideStore](https://sidestore.io), which re-signs on the phone
    over WiFi with no computer involved.
 
@@ -102,14 +102,24 @@ Free-tier limits worth remembering:
 | New App IDs | 10 per 7 days |
 
 The App ID limit is why the bundle identifier is settled at `app.roadmapped` rather
-than left to drift. Nothing has been signed yet, so it is still free to change
-until the first iOS build runs.
+than left to drift. An App ID is consumed when the app is *signed*, not when it
+is built: CI produces an unsigned .ipa, so nothing has been spent yet and the
+identifier is still free to change. That stops being true the first time
+SideStore signs a build.
 
 ## Still unverified
 
-The `ios` workflow has never run. It is written but untested, and the first run
-will probably need fixing. Finding that out early is cheap, so trigger it before
-the work depends on it.
+The `ios` workflow now runs and passes. It built an unsigned arm64 .ipa on the
+first attempt, and the Rust core cross-compiled to `aarch64-apple-ios` cleanly,
+which is the no-dependency rule in `crates/sketch-route` earning its keep. CI is
+free and unmetered because the repository is public; making it private again
+reintroduces the 10x macOS billing.
+
+What that still does not prove is that the app runs. The .ipa has never been
+signed, installed, or launched, because SideStore has not been set up. That
+setup is the fiddly part, not the build: it needs a pairing file generated from
+a computer and a tunnel for on-device refresh. Do it before the work depends on
+it, not at a trailhead.
 
 One Phase 0 task decides whether Phase 4 is possible at all: whether background
 location works under free provisioning. Test it with a throwaway app before
