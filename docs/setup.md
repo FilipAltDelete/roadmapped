@@ -2,125 +2,111 @@
 
 ## What this machine can and cannot do
 
-Linux builds and tests the Rust engine, and builds and runs the Flutter app on
-Android. It cannot build for iOS. Nothing changes that except macOS.
+Everything. That is the change.
 
-So the loop is:
+The previous version of this document explained which half of the project had to
+happen somewhere else: Linux could build and test the Rust engine and run the
+Flutter app on Android, but iOS needed macOS, and the only route onto the phone
+was a macOS CI runner, a downloaded artefact and SideStore. None of that is true
+any more. A web app builds here, runs here, and reaches the phone over WiFi.
 
-- **Every day:** write Rust and Dart, run on Android, run `make test`,
-  `make check` and `make eval`. All local, all fast.
-- **Every week or so:** trigger the `ios` workflow, download the artefact,
-  install it on the iPhone.
+So the loop is one loop:
+
+- Write Rust and TypeScript, run `make test`, `make check` and `make eval`.
+- Run `make host` and open the printed URL on the phone.
 
 ## Toolchain
 
-Everything is installed and pinned. None of it needed root, and all of it lives
-in the home directory.
-
 | Tool | Version | Managed by |
 | --- | --- | --- |
+| Node | 26.8.1 | `mise.toml` |
 | Rust | system toolchain | rustup |
-| Flutter | 3.47.5 | `mise.toml` |
-| Java | Temurin 21 | `mise.toml` |
-| Android SDK | platform 36, build-tools 36.1.0 | `~/Android/Sdk` |
+| wasm32 target | `wasm32-unknown-unknown` | rustup |
 
-`mise.toml` also exports `ANDROID_HOME`, so entering the directory is enough to
-get a working environment. Verify with:
+Entering the directory is enough to get Node on the path. The one thing rustup
+needs, once:
 
 ```sh
-mise exec -- flutter doctor
+rustup target add wasm32-unknown-unknown
 ```
 
-Chrome and the Linux desktop toolchain show as missing. That is expected and
-irrelevant, because the targets are iOS and Android.
-
-### Reinstalling from scratch
+Then:
 
 ```sh
-mise install                                   # Flutter and Java
-curl -O https://dl.google.com/android/repository/commandlinetools-linux-16111833_latest.zip
-# unzip to ~/Android/Sdk/cmdline-tools/latest, then:
-sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.1.0"
-mise exec -- flutter config --android-sdk ~/Android/Sdk
+make install     # the web client's dependencies
+make test        # should be green
 ```
+
+There is no Android SDK, no Java, no Flutter and no Xcode. Nothing needs root.
 
 ## Running the app
 
 Three ways to see it, in increasing order of trust.
 
-**Widget tests.** No device, no emulator, runs in seconds.
+**Tests.** No browser, runs in seconds.
 
 ```sh
-make app-test
+make test
 ```
 
-**Emulator.** Good enough for layout and logic. Creates the virtual device on
-first use, which takes a minute, then boots in about twenty seconds.
+**A desktop browser.** Good enough for layout and logic.
 
 ```sh
-make emulator     # start it
-make run          # install and launch the app
+make dev
 ```
 
-Hot reload works once `flutter run` is attached: press `r` to reload, `R` to
-restart, `q` to quit.
+Vite hot-reloads TypeScript on save. Changing the Rust engine needs `make wasm`
+and a page reload, because the compiled module is fetched rather than bundled.
 
 **A real phone.** The only way to judge whether drawing actually feels right.
-Enable Developer Options and USB debugging on the device, plug it in, accept the
-prompt, then:
 
 ```sh
-make devices      # confirm it is seen
-make run
+make host
 ```
 
-An emulator drawn on with a mouse tells you nothing about a thumb on glass. Use
-it for logic, not for feel.
+Open the Network URL it prints on the phone, on the same WiFi. A desktop browser
+drawn on with a mouse tells you nothing about a thumb on glass. Use it for
+logic, not for feel.
 
-The first Gradle build downloads an NDK and takes several minutes. Later builds
-take about ten seconds.
+## Installing on the phone
 
-## Getting a build onto the iPhone
+Open the URL in Safari, tap Share, tap Add to Home Screen.
 
-A free Apple Developer account signs an app for seven days at a time. After that
-it stops launching until it is re-signed.
+That is the whole of it. No signature, no seven-day expiry, no App ID spent, no
+pairing file, no SideStore, no cable. The app updates when you reload it.
 
-1. Trigger the `ios` workflow in GitHub Actions by hand.
-2. Download the `roadmapped-ipa` artefact.
-3. Install with [SideStore](https://sidestore.io), which re-signs on the phone
-   over WiFi with no computer involved.
+**Install it rather than using a tab**, and not for tidiness. In a tab:
 
-Set SideStore up once, early. Standing at a trailhead with an expired app is the
-wrong time to learn it.
+- Safari's edge-swipe back gesture swallows strokes that start near the left
+  edge, which is exactly where a right-handed thumb begins.
+- The address bar collapses and expands under a finger that is mid-line,
+  resizing the viewport while you draw.
+- The origin gets a smaller storage allowance and is likelier to be evicted.
 
-Free-tier limits worth remembering:
+The app says so itself, once, on iOS outside standalone mode.
 
-| Limit | Value |
-| --- | --- |
-| Signature lifetime | 7 days |
-| Sideloaded apps at once | 3 |
-| New App IDs | 10 per 7 days |
+For the deployed copy rather than a laptop on the same WiFi, pushing to `main`
+publishes to GitHub Pages through `.github/workflows/web.yml`.
 
-The App ID limit is why the bundle identifier is settled at `app.roadmapped` rather
-than left to drift. An App ID is consumed when the app is *signed*, not when it
-is built: CI produces an unsigned .ipa, so nothing has been spent yet and the
-identifier is still free to change. That stops being true the first time
-SideStore signs a build.
+## What is still unverified
 
-## Still unverified
+**The app has never been opened on a phone.** The engine's guarantees are
+checked through WebAssembly in `web/test/engine.test.ts`, and the drawing
+geometry has unit tests, but no thumb has touched the drawing surface. Finger
+drawing is the risky part of this app and a desktop pointer proves nothing about
+it.
 
-The `ios` workflow now runs and passes. It built an unsigned arm64 .ipa on the
-first attempt, and the Rust core cross-compiled to `aarch64-apple-ios` cleanly,
-which is the no-dependency rule in `crates/sketch-route` earning its keep. CI is
-free and unmetered because the repository is public; making it private again
-reintroduces the 10x macOS billing.
+Three numbers worth measuring the first time it runs on the phone, because later
+phases are sized against guesses until then:
 
-What that still does not prove is that the app runs. The .ipa has never been
-signed, installed, or launched, because SideStore has not been set up. That
-setup is the fiddly part, not the build: it needs a pairing file generated from
-a computer and a tunnel for on-device refresh. Do it before the work depends on
-it, not at a trailhead.
+1. **How long a match takes.** WebAssembly runs a pointer-chasing graph search
+   at roughly half native speed, single-threaded unless the app is served with
+   COOP and COEP headers for `SharedArrayBuffer`. The Phase 2 targets were
+   written for native and need re-measuring.
+2. **How large a graph Safari tolerates** before it discards the tab. This sets
+   the region size in Phase 5 and cannot be guessed from a desktop.
+3. **How much storage the origin is actually granted**, installed versus in a
+   tab, and whether `navigator.storage.persist()` is granted.
 
-One Phase 0 task decides whether Phase 4 is possible at all: whether background
-location works under free provisioning. Test it with a throwaway app before
-committing to the navigation work.
+Phase 4 needs no such investigation. Background location is not restricted on
+the web, it is absent, and the phase is written around that.

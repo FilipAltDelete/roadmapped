@@ -146,6 +146,35 @@ impl Graph {
 
     /// Nearest node to `p`, provided it lies within `radius_m`.
     pub fn nearest_node_within(&self, p: LatLng, radius_m: f64) -> Option<NodeId> {
+        self.nearest_within(p, radius_m).map(|(id, _)| id)
+    }
+
+    /// Nearest node to `p` and its distance, searching out to `max_radius_m`.
+    ///
+    /// The radius doubles until something is found, so a point sitting on the
+    /// network costs one cell lookup while a point far off it still resolves
+    /// without scanning every node. Any node beyond the radius already searched
+    /// is further away than one found inside it, so the first hit is the
+    /// nearest.
+    ///
+    /// `max_radius_m` is a real limit, not a formality. A line drawn in the
+    /// middle of an ocean has no sensible nearest path, and saying so is better
+    /// than silently starting the route in another county.
+    pub fn nearest_node(&self, p: LatLng, max_radius_m: f64) -> Option<(NodeId, f64)> {
+        let mut radius = self.node_index.cell_m.max(1.0);
+        loop {
+            let capped = radius.min(max_radius_m);
+            if let Some(hit) = self.nearest_within(p, capped) {
+                return Some(hit);
+            }
+            if capped >= max_radius_m {
+                return None;
+            }
+            radius *= 2.0;
+        }
+    }
+
+    fn nearest_within(&self, p: LatLng, radius_m: f64) -> Option<(NodeId, f64)> {
         let mut best: Option<(NodeId, f64)> = None;
         for id in self.node_index.near(p, radius_m) {
             let d = p.haversine_m(self.nodes[id as usize]);
@@ -153,7 +182,7 @@ impl Graph {
                 best = Some((id, d));
             }
         }
-        best.map(|(id, _)| id)
+        best
     }
 }
 
@@ -271,6 +300,25 @@ mod tests {
         assert_eq!(g.outgoing(a).len(), 1);
         assert_eq!(g.outgoing(c).len(), 1);
         assert!((g.edge(0).length_m - 100.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn nearest_node_reaches_further_than_one_cell_but_not_forever() {
+        let mut b = Graph::builder();
+        b.add_node(LatLng::from_local(BASE, 0.0, 0.0));
+        let g = b.build();
+
+        // Well outside a 400 m index cell, so this only works if the search
+        // widens rather than giving up after the first ring.
+        let probe = LatLng::from_local(BASE, 3000.0, 0.0);
+        let (id, d) = g.nearest_node(probe, 5000.0).expect("should reach it");
+        assert_eq!(id, 0);
+        assert!((d - 3000.0).abs() < 10.0, "reported {d} m");
+
+        assert!(
+            g.nearest_node(probe, 1000.0).is_none(),
+            "the cap has to mean something"
+        );
     }
 
     #[test]

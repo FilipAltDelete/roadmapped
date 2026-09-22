@@ -1,0 +1,20 @@
+[package]
+name = "sketch-route-wasm"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The WebAssembly seam over sketch-route. Raw C ABI, no bindgen."
+
+# Also deliberately dependency-free, for the same reason as the crate it wraps.
+#
+# wasm-bindgen would be the obvious choice here and is deliberately not used.
+# It requires a wasm-bindgen-cli pinned to the exact crate version, which is a
+# standing CI failure, and it generates glue this boundary does not need: every
+# value crossing it is an f64. Hand-written glue costs about eighty lines of
+# TypeScript in web/src/wasm.ts and removes a build dependency permanently.
+[dependencies]
+sketch-route = { path = "../sketch-route" }
+
+[lib]
+crate-type = ["cdylib"]

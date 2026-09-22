@@ -5,7 +5,8 @@
 //! promise is broken, whatever the other numbers say.
 
 use sketch_route::{
-    evaluate, match_sketch, Graph, LatLng, MatchRequest, Polyline, Profile, Surface, WayKind,
+    evaluate, match_sketch, Graph, LatLng, MatchError, MatchRequest, Polyline, Profile, Surface,
+    WayKind,
 };
 
 const BASE: LatLng = LatLng::new(59.3293, 18.0686);
@@ -176,6 +177,54 @@ fn walkers_prefer_the_footway_to_the_equally_direct_main_road() {
             "a walker should not be sent down a main road when a footway mirrors it"
         );
     }
+}
+
+#[test]
+fn a_line_starting_off_the_network_is_pulled_onto_it_and_says_how_far() {
+    // A finger does not land on a path. The old behaviour refused anything
+    // starting more than 225 m out, which on a real map is most of a field.
+    let graph = grid();
+    let sketch = line(&[(-400.0, 400.0), (900.0, 400.0)]);
+    let request = MatchRequest::new(sketch.clone(), Profile::walk());
+
+    let route = match_sketch(&graph, &request).expect("should snap onto the grid and route");
+
+    assert!(
+        (route.start_snap_m - 400.0).abs() < 20.0,
+        "expected roughly a 400 m snap, got {:.0} m",
+        route.start_snap_m
+    );
+    assert!(
+        route.goal_snap_m < 1.0,
+        "the far end already sat on a node, so nothing should have moved"
+    );
+
+    // The route still runs along the row that was drawn.
+    let m = evaluate(&sketch, &route.geometry, 75.0, 20.0);
+    assert!(
+        m.max_route_to_sketch_m < 20.0,
+        "the snap must not drag the route off the line: {:.0} m",
+        m.max_route_to_sketch_m
+    );
+}
+
+#[test]
+fn snapping_stops_at_the_limit_rather_than_reaching_across_the_map() {
+    // Without a cap, "nearest path" eventually means "somewhere else entirely",
+    // which is the silent wrong answer this project exists to avoid.
+    let graph = grid();
+    let sketch = line(&[(-5_000.0, 400.0), (900.0, 400.0)]);
+
+    let mut request = MatchRequest::new(sketch.clone(), Profile::walk());
+    request.params.max_snap_m = 500.0;
+    assert_eq!(
+        match_sketch(&graph, &request).unwrap_err(),
+        MatchError::NoStartNode
+    );
+
+    // Raise the limit past the gap and the same sketch routes.
+    request.params.max_snap_m = 6_000.0;
+    assert!(match_sketch(&graph, &request).is_ok());
 }
 
 #[test]

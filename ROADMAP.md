@@ -1,10 +1,10 @@
-# Roadmap: Sketch-to-Route Exploration App (iPhone)
+# Roadmap: Sketch-to-Route Exploration App (iPhone, as a web app)
 
 > Draw a line on the map with your finger. The app turns it into a real, walkable or rideable
 > route that follows your line as faithfully as the path network allows. Never the fastest
 > route. Always the route that looks most like what you drew.
 
-Target: iPhone, installed via a free Apple Developer account.
+Target: iPhone, installed to the home screen from a URL.
 Development machine: Linux.
 Last updated: 2026-09-22
 
@@ -23,37 +23,56 @@ silently reroute around it.
 
 **Built for the field.** Offline-capable. Battery-conscious from day one.
 
-**Non-goals:** car navigation, competing with Google Maps on speed, social features, live traffic,
-App Store release (not possible on the free tier).
+**Non-goals:** car navigation, competing with Google Maps on speed, social features, live traffic.
+
+App Store release is no longer a non-goal; it is simply not the distribution mechanism. The app is
+a URL. Anyone who opens it has it.
 
 ---
 
 ## 2. Target and constraints
 
-The free Apple Developer account changes what is possible. These constraints are not obstacles to
-work around later. They are design inputs now.
+This project began as a native iOS app and was rewritten as a web app. The reason was the free
+Apple Developer account, whose constraints shaped the whole of the original plan:
 
-| Constraint | Value | Consequence |
+| Constraint | Value | Now |
 | --- | --- | --- |
-| Signed app lifetime | 7 days | The app must be re-signed weekly or it stops launching |
-| Simultaneous sideloaded apps | 3 | Fine for one app, tight if you fork variants |
-| New App IDs | 10 per 7 days | Do not churn the bundle identifier |
-| TestFlight | Not available | No beta testers, no distribution to friends |
-| App Store | Not available | Personal use only until you pay the yearly fee |
-| Building for iOS | Requires macOS and Xcode | You are on Linux. See section 5. |
+| Signed app lifetime | 7 days | Gone |
+| Simultaneous sideloaded apps | 3 | Gone |
+| New App IDs | 10 per 7 days | Gone |
+| TestFlight | Not available | Irrelevant; the app is a link |
+| App Store | Not available | Irrelevant |
+| Building for iOS | Requires macOS and Xcode | Gone; it builds on Linux |
 
-**The 7-day expiry is the dangerous one for this app specifically.** A navigation app that dies
-mid-hike is worse than no app. Two mitigations, both in Phase 0:
+The seven-day expiry was the dangerous one, and it is worth being clear about what removing it
+changed. The entire mitigation strategy around it disappeared with it: SideStore setup, on-device
+re-signing, expiry warnings at day five, a bundle identifier that could not churn. That is roughly
+a phase of work that no longer needs doing.
 
-- Use SideStore, which re-signs on-device over WiFi with no computer involved, so a refresh is a
-  tap rather than a cable and a laptop.
-- Always keep GPX export working. If the app expires in the field, the route is still openable in
-  OsmAnd or Organic Maps. This is the reason GPX export stays a first-class feature and not a
-  nice-to-have.
+### What replaces them
+
+The web platform has its own limits. These are design inputs now, and unlike the Apple ones they
+cannot be paid away with a yearly fee.
+
+| Constraint | Consequence |
+| --- | --- |
+| **No background location** | Navigation runs with the screen on. In a pocket it stops. Phase 4 is written around this. |
+| **A backgrounded tab can be discarded** | Nothing lives only in memory. State is written to IndexedDB on every change. |
+| **No memory-mapped graph** | The graph loads into WebAssembly linear memory. Region size is bounded by what Safari tolerates. |
+| **WebAssembly is slower than native** | Roughly half speed on a pointer-chasing graph search. Single-threaded without COOP/COEP headers. |
+| **Safari's edge-swipe eats strokes** | Standalone mode removes it. The app asks to be installed. |
+| **Storage is granted, not guaranteed** | `navigator.storage.persist()` is requested. A refusal is survivable, not an error. |
+
+**Background location is the real loss.** It is not restricted on the web, it is absent: service
+workers cannot reach geolocation, and no API anywhere provides position while the page is
+suspended. A phone in a pocket records nothing. This was an unverified assumption in the native
+plan and is now a known no, which is at least a better thing to plan against.
 
 ---
 
 ## 3. The core idea: sketch-to-route
+
+Unchanged by the platform. This section is about the algorithm, which does not care where it runs.
 
 ### Problem statement
 
@@ -72,33 +91,30 @@ between candidate segments matches the straight-line distance between sketch poi
 the most probable path.
 
 This is Newson & Krumm (2009), already implemented in Valhalla `trace_route`, GraphHopper, and
-OSRM `match`. Tune for sketch noise rather than GPS noise: large search radius, large GPS accuracy,
-large breakage distance.
+OSRM `match`.
 
-Good enough to validate the idea in days. Not good enough to ship, because it is built for tens of
-metres of noise and a finger produces hundreds.
+**This step has been overtaken.** The Rust matcher in section C was built first and works. Standing
+Valhalla up now would be erecting the scaffolding after the building. See section 8.
 
 ### C. Corridor-constrained routing, the real engine
 
-Build a corridor of width `W` (start at 75 m) around `P`. Run A* on the path graph with a cost
-function that charges for leaving the line:
+Build a corridor of width `W` (75 m) around `P`. Run A* on the path graph with a cost function that
+charges for leaving the line:
 
 ```
-cost(edge) = length(edge) * (1 + alpha * dist(edge, P) / W)
-           + backtrack_penalty(edge)
-           + profile_penalty(edge)
+cost(edge) = length(edge) * profile_multiplier(edge) * (1 + alpha * dist(edge, P) / W)
 ```
 
 - `dist(edge, P)`: mean distance from the edge to the sketch.
-- `alpha`: strictness. Becomes the user-facing slider.
+- `alpha`: strictness. The user-facing slider, 0 to 12.
 - Prune edges beyond roughly `3W` from `P`. This is what keeps the search fast.
-- `backtrack_penalty`: track progress `t` along `P` as the arc-length position of the closest
-  point. Penalize edges where `t` decreases, and edges where `t` jumps far ahead and shortcuts a
-  bend.
-- **Checkpoints as the robustness fallback:** drop one every `W` metres along `P`. The route must
-  pass within radius `R` of each, in order. This alone kills most shortcut failures.
-- `profile_penalty`: the exploration preferences. Trail bonus, big-road penalty, surface, stairs.
-- A* heuristic: straight-line distance to the end node. Admissible because cost is at least length.
+- **Checkpoints, carried in the search state.** Drop one every `W` metres along `P`. The route must
+  pass within radius `R` of each, in order. Cost alone cannot stop a route cutting the corner off a
+  U-bend, because the shortcut is genuinely cheaper; carrying checkpoint progress in the A* state
+  removes the shortcut from the search space instead of trying to out-price it. Skipping one is
+  allowed at a heavy penalty, so a single unreachable waypoint does not make a sketch unroutable.
+- `profile_multiplier`: the exploration preferences. Always at least 1.0, so cost never falls below
+  geometric length and the A* heuristic stays admissible.
 
 ### Measuring "follows the line"
 
@@ -120,32 +136,40 @@ Every algorithm change is scored against a fixed set of sketches.
 | Layer | Choice | Why |
 | --- | --- | --- |
 | Map data | OpenStreetMap | Has the trails and footpaths exploration needs |
-| Map rendering | MapLibre Native, via the Flutter plugin | Metal-backed on iOS, vector tiles, offline-capable |
-| Tiles | PMTiles bundled or downloaded per region | No tile server bill, works offline |
-| Matching engine | **Rust**, compiled into the app | Performance, and it runs on-device with no server |
-| Bridge | flutter_rust_bridge | Generated Dart bindings over the Rust core |
-| Client | **Flutter** | Develops on Linux, iterates on Android, builds for iOS in CI |
-| Prototype matcher | Valhalla in Docker, Phase 1 only | Proves the idea before the Rust core exists |
-| Storage | SQLite on-device | No backend needed for personal use |
+| Map rendering | MapLibre GL JS | Vector tiles, WebGL, the reference PMTiles integration |
+| Tiles | PMTiles, fetched by range request | No tile server bill, works offline |
+| Matching engine | **Rust**, compiled to WebAssembly | Performance, on-device, no server |
+| Seam | Raw C ABI, hand-written glue | Every value crossing is an `f64`; a code generator would earn nothing |
+| Threading | Web Worker | The search must never block the drawing surface |
+| Client | **TypeScript** | Develops and runs anywhere, including the target |
+| Storage | IndexedDB | No backend needed, and the platform may discard the page |
 
-### Why Flutter rather than Swift
+### Why a web app rather than native
 
-Native SwiftUI would be the better app if you owned a Mac. You do not. Every Swift iteration would
-require a cloud build, turning a ten-second change into a ten-minute round trip. That workflow does
-not survive contact with real development.
+Not because the web is the better platform for this. Native iOS would give background location, a
+memory-mapped graph, and faster search. It would also require, on a free account, a seven-day
+re-signing ritual, a macOS runner for every build, a bundle identifier that cannot change, and an
+App ID budget. The daily loop would leave Linux.
 
-Flutter lets you write and test on Linux, iterate fast against an Android device or emulator, and
-produce an iOS build in CI only when you actually want it on the phone. The Rust core, which is the
-performance-critical half, is identical either way.
-
-**If you acquire a Mac,** the correct move is SwiftUI plus MapLibre Native plus the same Rust core
-through UniFFI. The Rust crate carries over untouched. Keep that seam clean.
+The trade is real and was made with the loss understood: Phase 4 gets worse, everything else gets
+better, and the project stops having a deployment problem.
 
 ### Why the matcher is Rust and on-device
 
-Performance is the stated priority. A graph search over millions of edges is the wrong job for
-Dart or JavaScript. Rust gives predictable speed with no garbage collection pauses, compiles to
-both iOS and Android, and needs no server, which means it works in airplane mode in a forest.
+A graph search over millions of edges is the wrong job for TypeScript. Rust gives predictable speed
+with no garbage collection pauses, compiles to WebAssembly, and needs no server, which means it
+works in airplane mode in a forest.
+
+**`crates/sketch-route` has no dependencies.** That rule was written when the targets were iOS and
+Android, and it is the reason this pivot cost nothing: the engine compiled to `wasm32` without a
+single edit. Keep it.
+
+### Why the seam has no bindgen
+
+`crates/sketch-route-wasm` exposes `alloc_f64`, a graph handle, and one match function that returns
+a flat `f64` buffer. `wasm-bindgen` would require a CLI pinned to the crate version, which is a
+standing CI failure, to generate glue for a boundary that carries only numbers. The eighty lines in
+`web/src/wasm.ts` are the other half of one ABI and change with it.
 
 ### Data model
 
@@ -161,117 +185,101 @@ Self-contained by design. No server IDs required to render a route.
 
 ---
 
-## 5. Build and deploy pipeline
+## 5. Build and deploy
 
-This is the part that has to work before anything else matters.
+This used to be the hardest section. It is now four lines.
 
 **Daily loop, entirely on Linux:**
-Write Dart and Rust, run on an Android device or emulator, iterate in seconds.
+Write Rust and TypeScript, `make dev`, iterate in seconds.
 
-**iOS loop, roughly weekly:**
-Push to a repo, a macOS runner builds and signs the app, you install the result on the iPhone.
+**On the phone:**
+`make host`, open the printed URL over WiFi. Or push to `main`, which publishes to GitHub Pages.
 
-Options for the macOS build step:
+**Installing:**
+Share, then Add to Home Screen. No signature, no expiry, no cable, no Mac.
 
-| Option | Cost | Notes |
-| --- | --- | --- |
-| GitHub Actions macOS runner | Free for public repos | Private repos burn minutes at a 10x multiplier |
-| Codemagic | Free tier for personal use | Purpose-built for Flutter, least setup |
-| Used Mac Mini with Apple Silicon | One-time hardware cost | Removes every constraint in this section |
-
-**Installing on the phone:** SideStore refreshes the 7-day signature on-device over WiFi. Set it up
-once in Phase 0 and weekly renewal becomes a tap instead of a chore.
-
-A Mac Mini is the single purchase that most improves this project. Worth revisiting once the idea
-is proven.
+A Mac Mini was previously "the single purchase that most improves this project". It now buys
+nothing this project needs.
 
 ---
 
 ## 6. Phases
 
-Durations assume one developer working most of the week.
+Durations assume one developer working most of the week. Checkboxes reflect what is actually built.
 
-### Phase 0: Prove the toolchain (1-2 weeks)
+### Phase 0: Prove the toolchain (done, except the phone)
 
-**Goal:** get a trivial app onto the iPhone and keep it there. Do this before writing any real
-code. If this fails, everything after it is wasted work.
-
-- [ ] Flutter installed on Linux, Android device or emulator running a hello-world.
-- [ ] Rust in the project via flutter_rust_bridge, calling one function from Dart.
-- [ ] MapLibre rendering a map in the app on Android.
-- [ ] iOS build succeeding on a macOS CI runner.
-- [ ] **The signed app installed and launching on your iPhone.**
-- [ ] SideStore installed, one refresh cycle completed successfully.
-- [ ] Verify background location permission works under free provisioning. This is the one
-  capability that might be restricted, and Phase 4 depends on it. Find out now, not in six months.
+- [x] Node and Rust on Linux, the app running in a browser.
+- [x] Rust in the project through WebAssembly, called from TypeScript.
+- [x] MapLibre rendering a map under the drawing surface.
+- [x] The engine's guarantees verified across the WebAssembly boundary (`web/test/engine.test.ts`).
+- [x] A working name. Bundle identifiers no longer exist to churn.
+- [ ] **The app opened on the iPhone, added to the home screen, and drawn on with a thumb.**
+- [ ] Measure, on the phone: match time, the graph size Safari tolerates, storage actually granted.
 - [ ] Choose a development region and build a PMTiles extract for it.
-- [ ] Valhalla running in Docker on that region, for Phase 1 only.
 - [ ] Write the evaluation set: 10 sketches over the region. Urban grid, river loop, forest trail,
   line crossing a lake, self-crossing loop, out-and-back, long straight road, dense city centre,
   coastal path, hilly park.
-- [ ] Pick a working name and a bundle identifier. Do not change it later.
 
-**Exit criteria:** a map renders on your iPhone, the app survives a SideStore refresh, and you know
-whether background location is available.
+The background-location investigation that used to live here is deleted rather than done. The
+answer is known and is no.
 
-### Phase 1: Draw and match (3-5 weeks)
+**Exit criteria:** the app runs from the home screen on the iPhone, drawing feels right under a
+thumb, and the three numbers above are measured rather than assumed.
 
-**Goal:** draw a line on the phone, get a route that follows it.
+### Phase 1: Draw and match (largely done)
 
-- [ ] Draw mode toggle. Map gestures disabled while drawing, so a drag draws instead of panning.
-- [ ] Capture touch points, smooth, simplify with Douglas-Peucker at 5-10 m tolerance.
-- [ ] Render the sketch as a soft line under a bold route line.
-- [ ] Send the sketch to Valhalla `trace_route` with `costing: pedestrian`,
-  `shape_match: map_snap`, and raised `search_radius`, `gps_accuracy` and `breakage_distance`.
-  Raise the maximum search radius in the meili block of `valhalla.json`.
-- [ ] Stats panel: distance, estimated time, max deviation.
-- [ ] Clear and redraw.
-- [ ] Evaluation harness: run all 10 sketches, print the metrics table.
+- [x] Draw mode toggle. Map gestures disabled while drawing, so a drag draws instead of panning.
+- [x] Capture pointer events, thin with Douglas-Peucker.
+- [x] Render the sketch as a soft line under a bold route line.
+- [x] Send the sketch to the matcher and draw what comes back.
+- [x] Strictness slider wired end to end.
+- [x] Profiles wired end to end: walk, hike, run, gravel, road.
+- [x] Stats panel: distance, deviation, share of the route on the line, gap count.
+- [x] Clear and redraw.
+- [x] Evaluation harness: run the canonical sketches, print the metrics table.
+- [x] GPX export through the share sheet.
 - [ ] **Test drawing on the actual phone, with an actual thumb, outdoors, in sunlight.** A finger
-  covers the map and draws fat jittery lines. Whatever you tuned on an emulator will be wrong.
+  covers the map and draws fat jittery lines. Whatever was tuned on a desktop will be wrong.
+- [ ] A real path network under it. Everything above runs against a synthetic grid.
 
-**Exit criteria:** a demo video shot on the iPhone. All 10 sketches scored. A written list of
-failure cases, which become the Phase 2 requirements.
+**Exit criteria:** a demo video shot on the iPhone. All 10 sketches scored over a real extract. A
+written list of failure cases, which become the Phase 2 requirements.
 
-### Phase 2: The Rust matcher (6-10 weeks)
+### Phase 2: The Rust matcher (the engine is built; the data is not)
 
-**Goal:** own the matching quality, on-device.
-
-- [ ] Rust crate: load a pedestrian and bicycle graph from the OSM extract, spatial index over
-  edges.
-- [ ] Corridor construction and edge pruning.
-- [ ] Cost function: deviation, backtrack, profile.
-- [ ] Checkpoint fallback.
-- [ ] Strictness slider wired end to end.
+- [x] Corridor construction and edge pruning.
+- [x] Cost function: deviation, profile, admissible by construction.
+- [x] Checkpoint fallback, carried in the search state.
+- [x] Self-crossing and out-and-back sketches handled correctly.
+- [ ] **OSM importer.** Load a pedestrian and bicycle graph from an extract. This is the single
+  largest piece of unbuilt work in the project and everything real depends on it.
 - [ ] Gap handling. When no path exists in the corridor, either insert a flagged off-path straight
   segment for hiking, or take the nearest detour in the city. Return gaps so the UI can draw them
   differently.
-- [ ] Self-crossing and out-and-back sketches handled correctly.
-- [ ] Graph packed into a compact on-device format, loaded memory-mapped.
-- [ ] Performance targets on the phone, not a laptop.
+- [ ] Graph packed into a compact format, fetched and held in WebAssembly memory.
+- [ ] Performance targets, measured on the phone.
 
-| Sketch length | Target |
-| --- | --- |
-| 20 km | under 1 second |
-| 100 km | under 3 seconds |
+| Sketch length | Target (native, as originally written) | Web target |
+| --- | --- | --- |
+| 20 km | under 1 second | to be set from a phone measurement |
+| 100 km | under 3 seconds | to be set from a phone measurement |
 
-- [ ] Side-by-side comparison against Valhalla on the evaluation set. Retire Valhalla once the Rust
-  matcher wins.
+The native numbers are kept for reference. Setting the web ones before measuring would be
+inventing them.
 
-**Exit criteria:** the Rust matcher beats map-matching on mean deviation and gap count, runs
-on-device with no network, and the strictness slider visibly reshapes the route.
+**Exit criteria:** the matcher runs over a real extract with no network, and the strictness slider
+visibly reshapes the route.
 
 ### Phase 3: Exploration and export (4-8 weeks)
 
-- [ ] Profiles: walk, hike, run, gravel, road bike. Each with its own preferences for trails,
-  surface, big roads, lighting, stairs.
+- [x] Profiles: walk, hike, run, gravel, road, each with its own preferences.
+- [x] **GPX export via the iOS share sheet.** The bridge into OsmAnd, Organic Maps, Komoot, Gaia.
 - [ ] Elevation profile from a DEM tile source.
 - [ ] Surface and way-type breakdown: paved, gravel, trail, stairs, ferry.
 - [ ] Route editing: redraw a section, drag to pull the route, adjust strictness locally.
 - [ ] Points of interest inside the corridor. Viewpoints, water, shelters, cafes.
-- [ ] Save and name routes in SQLite.
-- [ ] **GPX export via the iOS share sheet.** Your insurance against the 7-day expiry and the
-  bridge into OsmAnd, Organic Maps, Komoot and Gaia.
+- [ ] Save and name routes, beyond the single current session already persisted.
 - [ ] GPX import, so an existing track can be re-sketched.
 
 **Exit criteria:** a saved route with elevation and surface data, exported as GPX, opening
@@ -279,41 +287,53 @@ correctly in OsmAnd on the same phone.
 
 ### Phase 4: Navigation that respects the line (4-8 weeks)
 
-Contingent on background location working under free provisioning, confirmed in Phase 0.
+**Rewritten for the platform.** Foreground navigation, honestly labelled.
 
-- [ ] GPS tracking, heading, follow-me camera.
+- [ ] GPS tracking with `watchPosition`, heading, follow-me camera.
+- [ ] Screen wake lock while navigating, released on exit.
 - [ ] Breadcrumb guidance first. Exploration users generally prefer it to turn-by-turn.
 - [ ] Turn-by-turn second, with voice.
 - [ ] **Off-route behaviour: never reroute to the destination.** Find the nearest sensible point on
   the planned route ahead of you, route back to it, and resume following the line.
-- [ ] Background location with a measured battery budget.
-- [ ] Record the actual track, then show planned against walked.
+- [ ] **Resume on return.** On `visibilitychange`, take a fresh fix and re-enter guidance through
+  the off-route path above. Coming back from a locked screen is the same problem as walking off
+  course, and uses the same code.
+- [ ] Record the actual track, with the holes shown as holes. A screen-off stretch produces no
+  samples, and interpolating across it would mean comparing the plan against itself.
+- [ ] Measure the battery cost of screen-on navigation, which is the real number here.
 
-**Exit criteria:** complete a real walk or ride using only the app, with the battery cost measured.
+**What this phase cannot do:** track a phone in a pocket. If that turns out to matter more than
+expected in the field, the options are a native shell around the same Rust engine, or exporting to
+OsmAnd and letting it do the tracking. Both are live; neither is scheduled.
+
+**Exit criteria:** complete a real walk using only the app, with the battery cost measured and the
+pocket case honestly documented.
 
 ### Phase 5: Offline and durability (3-6 weeks)
 
-Most of this comes free from the architecture, since the matcher is already on-device.
-
-- [ ] Region downloads: PMTiles plus the packed graph, managed in-app.
-- [ ] Storage management and region deletion.
+- [ ] Service worker: app shell cached, so a reload with no signal still starts.
+- [ ] Region downloads: PMTiles plus the packed graph, into Cache Storage or OPFS.
+- [ ] Storage management, region deletion, and a quota the user can see.
 - [ ] Airplane-mode test across draw, match, and navigate.
-- [ ] Crash reporting.
-- [ ] Graceful behaviour as the signature nears expiry. Warn at day five, prompt a refresh, make
-  sure GPX export works even after expiry.
+- [ ] Eviction test: background the app for a day, come back, confirm nothing was lost.
+- [ ] Error reporting.
 
-**Exit criteria:** a full hike planned and navigated with no signal.
+The seven-day expiry work that used to live here is deleted. Nothing expires.
 
-### Phase 6: Decide whether to pay (ongoing)
+**Exit criteria:** a full hike planned and navigated with no signal, and an app that survives being
+discarded from memory mid-walk.
 
-Only worth doing if Phases 1 through 5 produced something you use regularly.
+### Phase 6: Beyond personal use (ongoing)
 
-- [ ] Pay the yearly developer fee. This removes the 7-day expiry and unlocks TestFlight.
-- [ ] Beta via TestFlight.
-- [ ] Android release, which is nearly free given Flutter and the shared Rust core.
-- [ ] Route sharing, public route pages.
+Only worth doing if Phases 1 through 5 produced something worth using regularly.
+
+- [ ] Share a route as a link.
 - [ ] Onboarding that teaches drawing in twenty seconds.
-- [ ] App Store submission.
+- [ ] Public route pages.
+
+The yearly Apple fee, TestFlight and App Store submission are all gone from this list. If a native
+client is ever wanted, for background location, the Rust engine carries over unchanged and that is
+a deliberate property to keep.
 
 ---
 
@@ -321,12 +341,14 @@ Only worth doing if Phases 1 through 5 produced something you use regularly.
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| No Mac, CI loop too slow | Development stalls | Flutter plus Android for the daily loop. Revisit a used Mac Mini after Phase 1. |
-| 7-day expiry kills the app in the field | Lost trust in your own tool | SideStore, expiry warnings, GPX export always available |
-| Background location blocked on free tier | Phase 4 impossible | Verified in Phase 0, before it can cost you anything |
-| Matcher produces zigzags or shortcuts | Core value broken | Evaluation harness from Phase 1, checkpoints, strictness slider |
-| Finger drawing fights the map gestures | Bad first impression | Explicit draw mode, tested on real hardware in Phase 1 |
-| On-device graph too large or slow | Feature cut to online-only | Region-sized extracts, compact packed format, memory-mapped loading |
+| Finger drawing fights the map | Bad first impression | Explicit draw mode, `touch-action: none`, standalone install, tested on hardware |
+| Drawing feels wrong on a real phone | The core interaction fails | Phase 0 is not done until a thumb has tried it |
+| Matcher produces zigzags or shortcuts | Core value broken | Evaluation harness, checkpoints in the search state, strictness slider |
+| WebAssembly too slow on the phone | Feature cut, or a native client after all | Measured in Phase 0, before anything depends on the number |
+| Graph too large for Safari | Region size shrinks | Measured in Phase 0; packed format and per-region extracts |
+| Tab discarded mid-walk | Lost sketch, lost track | Everything persisted to IndexedDB on change; `persist()` requested |
+| Screen-off tracking impossible | Phase 4 weaker than planned | Known and designed around, not discovered late |
+| Battery cost of screen-on navigation | Short useful range | Measured in Phase 4; breadcrumb mode over turn-by-turn |
 | Sketch crosses no-path terrain | Confusing results | Gap segments surfaced in the UI, off-path option for hiking |
 | OSM data gaps | Wrong routes | Link out to OSM for fixes, accept it |
 | Scope creep into a generic map app | Never ships | The non-goals list. Every feature must serve "follow my line". |
@@ -335,22 +357,28 @@ Only worth doing if Phases 1 through 5 produced something you use regularly.
 
 ## 8. Open decisions
 
-1. Development region for the first extract.
-2. CI provider: GitHub Actions or Codemagic.
-3. Working name and bundle identifier, which cannot change cheaply.
-4. Realistic hours per week.
-5. Whether a used Mac Mini is worth it. Revisit after Phase 1.
+1. **Is Valhalla still worth standing up?** It was scaffolding to prove the idea before the Rust
+   matcher existed. The Rust matcher now exists and passes its tests. The remaining argument for
+   Valhalla is as a scoring baseline once there is a real extract, which is a smaller claim than
+   the one in `CLAUDE.md`. Decide when the importer lands, not before.
+2. Development region for the first extract.
+3. Where to host. GitHub Pages is wired up and free; it cannot set COOP/COEP headers, which
+   `SharedArrayBuffer` and a multi-threaded search would need.
+4. Whether to set COOP/COEP at all, which depends on whether the phone measurement says the search
+   needs threads.
+5. Realistic hours per week.
 
 ---
 
 ## 9. Prior art worth studying
 
 - **Footpath Route Planner**, iOS. Draw with a finger and it snaps to paths. The closest existing
-  product to this idea. Study its interaction model and its failure modes before Phase 1.
+  product to this idea. Study its interaction model and its failure modes.
 - **Komoot** and **Strava route builder**. Waypoint planners with good profile, surface and
   elevation interfaces.
-- **OsmAnd**, specifically its Follow Track mode. This is both your GPX export target and a
-  reference for navigating along a fixed line rather than rerouting.
+- **OsmAnd**, specifically its Follow Track mode. This is both the GPX export target and a
+  reference for navigating along a fixed line rather than rerouting. Also the fallback for the one
+  thing this app cannot do.
 - **Valhalla map-matching docs**: `trace_route`, `trace_attributes`, meili configuration.
 - Newson & Krumm, 2009, *Hidden Markov Map Matching Through Noise and Sparseness*.
-- **flutter_rust_bridge** documentation, for the Dart to Rust seam.
+- **PMTiles** and the `pmtiles` protocol for MapLibre GL JS, for Phase 5.

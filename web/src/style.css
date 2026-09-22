@@ -1,0 +1,373 @@
+/*
+ * Frosted glass over a dark map.
+ *
+ * The map is the content; every control floats above it. Panels are translucent
+ * so the map stays legible underneath, which matters when a route runs behind
+ * the bottom panel.
+ *
+ * The palette is carried over from the Flutter client, where it was tuned
+ * against a dark basemap: mid greys disappear there and only near-black and
+ * near-white read reliably.
+ */
+
+:root {
+  --accent: #ff4b4b;
+  --accent-soft: rgba(255, 75, 75, 0.2);
+  --ink: #f2f4f7;
+  --ink-dim: #9ba3ae;
+  --fill: rgba(255, 255, 255, 0.08);
+  --fill-strong: rgba(255, 255, 255, 0.14);
+  --stroke: rgba(255, 255, 255, 0.15);
+  --backdrop: #0b0d10;
+  --radius: 26px;
+  --blur: 24px;
+
+  /* Safe areas, so controls clear the notch and the home indicator. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  /* Dynamic viewport units, so the layout does not jump as Safari's address bar
+     collapses and expands under a finger that is mid-stroke. */
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--backdrop);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* Three defaults that fight finger drawing on iOS: rubber-band scrolling,
+     the grey tap flash, and text selection started by a long press. */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+}
+
+.map {
+  position: absolute;
+  inset: 0;
+}
+
+/* ------------------------------------------------------------------------- */
+/* The drawing surface                                                        */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Transparent to pointers unless draw mode is on, so the map receives gestures
+ * normally the rest of the time. `touch-action: none` is what stops iOS from
+ * treating a stroke as a scroll or a pinch; without it the first few points of
+ * every line are eaten by the browser before the page ever sees them.
+ */
+.draw-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  touch-action: none;
+}
+
+.draw-overlay.active {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.live-halo,
+.live-stroke {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.live-halo {
+  stroke: var(--accent);
+  stroke-width: 16;
+  opacity: 0.22;
+}
+
+.live-stroke {
+  stroke: var(--accent);
+  stroke-width: 4.5;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Glass surfaces                                                             */
+/* ------------------------------------------------------------------------- */
+
+.glass {
+  background: var(--fill);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.toolbar {
+  position: absolute;
+  right: 16px;
+  bottom: calc(var(--safe-bottom) + 232px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tool {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--stroke);
+  background: var(--fill);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tool svg {
+  width: 24px;
+  height: 24px;
+}
+
+.tool.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 18px 2px var(--accent-soft);
+}
+
+.tool:disabled {
+  color: rgba(155, 163, 174, 0.4);
+  cursor: default;
+}
+
+/* ------------------------------------------------------------------------- */
+/* The bottom panel                                                           */
+/* ------------------------------------------------------------------------- */
+
+.panel {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: calc(var(--safe-bottom) + 16px);
+  padding: 16px 20px 18px;
+}
+
+.panel-hint {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.panel-hint.drawing {
+  color: var(--accent);
+}
+
+.profiles {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.profile {
+  flex: 1;
+  padding: 7px 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 1px solid var(--stroke);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.profile.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.caption {
+  font-size: 11px;
+  letter-spacing: 1.1px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.caption.accent {
+  color: var(--accent);
+}
+
+.slider {
+  width: 100%;
+  margin: 6px 0 10px;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--stroke);
+  accent-color: var(--accent);
+}
+
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+}
+
+.slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+}
+
+.footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.status.error {
+  color: var(--accent);
+}
+
+.export {
+  flex: none;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--ink);
+  background: var(--fill-strong);
+  border: 1px solid var(--stroke);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.export:disabled {
+  color: rgba(155, 163, 174, 0.4);
+  cursor: default;
+}
+
+/* MapLibre's own chrome, toned down to match. */
+.maplibregl-ctrl-attrib {
+  background: rgba(11, 13, 16, 0.7) !important;
+  color: var(--ink-dim) !important;
+  border-radius: 8px;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: var(--ink-dim) !important;
+}
+
+/* ------------------------------------------------------------------------- */
+/* The install hint                                                           */
+/* ------------------------------------------------------------------------- */
+
+.install-hint {
+  position: absolute;
+  top: calc(var(--safe-top) + 12px);
+  left: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px 11px 16px;
+  border-radius: 16px;
+}
+
+.install-hint p {
+  margin: 0;
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
+.install-hint span {
+  display: block;
+  color: var(--ink-dim);
+  font-size: 12px;
+}
+
+.install-hint .dismiss {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  font-size: 19px;
+  line-height: 1;
+  color: var(--ink-dim);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------------------- */
+/* The problem banner                                                         */
+/* ------------------------------------------------------------------------- */
+
+.banner {
+  position: absolute;
+  top: calc(var(--safe-top) + 12px);
+  left: 16px;
+  right: 16px;
+  padding: 13px 16px;
+  border-radius: 16px;
+  border-color: var(--accent);
+  max-width: 560px;
+}
+
+.banner-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.banner-detail {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink-dim);
+  word-break: break-word;
+}

@@ -1,14 +1,16 @@
+# Entering this directory is enough to get a working environment.
+#
+# The toolchain is now two things: Node for the web client and Rust for the
+# engine. Flutter, Java and the Android SDK are gone, along with the iOS signing
+# chain they fed. That is the whole point of the web target.
+#
+# Node is pinned and duplicated in .github/workflows/web.yml. Change both
+# together.
 [tools]
-flutter = { version = "3.47.5", checksum_expr = '"sha256:" + filter(fromJSON(body).releases, { #.archive endsWith filename })[0].sha256', platforms = { linux-x64 = { checksum_url = "https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json", url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_{{ version | trim_end(pat='-stable') }}-stable.tar.xz" }, macos-arm64 = { checksum_url = "https://storage.googleapis.com/flutter_infra_release/releases/releases_macos.json", url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_arm64_{{ version | trim_end(pat='-stable') }}-stable.zip" }, macos-x64 = { checksum_url = "https://storage.googleapis.com/flutter_infra_release/releases/releases_macos.json", url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_{{ version | trim_end(pat='-stable') }}-stable.zip" }, windows-x64 = { checksum_url = "https://storage.googleapis.com/flutter_infra_release/releases/releases_windows.json", url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_{{ version | trim_end(pat='-stable') }}-stable.zip" } }, version_expr = 'fromJSON(body).releases | filter({ #.channel == "stable" }) | map({ replace(#.version, "-stable", "") }) | sortVersions()', version_list_url = "https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json" }
-java = "temurin-21.0.12+101.0.LTS"
+node = "26.8.1"
 
-# Android SDK lives in the home directory rather than a system path, so no part
-# of this toolchain needs root. JAVA_HOME is set by the java tool above.
-[env]
-ANDROID_HOME = "{{env.HOME}}/Android/Sdk"
-ANDROID_SDK_ROOT = "{{env.HOME}}/Android/Sdk"
-# Omarchy sets XDG_CONFIG_HOME, which avdmanager honours when it creates virtual
-# devices while the emulator binary and Flutter still look under $HOME/.android.
-# Without this, a device gets created that neither of them can find. Pinning the
-# path explicitly makes all three agree.
-ANDROID_AVD_HOME = "{{env.HOME}}/.config/.android/avd"
+# Rust stays on rustup rather than mise, because the wasm32 target is installed
+# through rustup and having two toolchain managers disagree about which rustc is
+# in scope is not worth the tidiness:
+#
+#   rustup target add wasm32-unknown-unknown

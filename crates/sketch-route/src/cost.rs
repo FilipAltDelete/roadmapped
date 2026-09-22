@@ -126,6 +126,16 @@ pub struct CostParams {
     pub checkpoint_spacing_m: f64,
     /// How near a node must come to count as reaching a checkpoint.
     pub checkpoint_radius_m: f64,
+    /// How far the ends of the line may be moved to reach the network.
+    ///
+    /// A finger does not land on a path, and refusing to route because the
+    /// stroke began in a field is not useful behaviour. The endpoints snap to
+    /// the nearest node and the distance is reported, so the interface can say
+    /// the line was moved rather than pretending it was not.
+    ///
+    /// The cap is what keeps that honest: past it there is no sensible nearest
+    /// path and the failure is the right answer.
+    pub max_snap_m: f64,
     /// Cost of giving up on a checkpoint.
     ///
     /// Without this, a checkpoint that lands in a lake or behind a fence makes
@@ -142,6 +152,7 @@ impl Default for CostParams {
             prune_factor: 3.0,
             checkpoint_spacing_m: 150.0,
             checkpoint_radius_m: 120.0,
+            max_snap_m: 2_000.0,
             checkpoint_skip_penalty_m: 2_000.0,
         }
     }

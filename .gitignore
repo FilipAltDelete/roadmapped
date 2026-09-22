@@ -2,15 +2,11 @@
 **/*.rs.bk
 Cargo.lock
 
-# Flutter / Dart
-/app/.dart_tool/
-/app/.flutter-plugins*
-/app/build/
-/app/ios/Pods/
-/app/ios/.symlinks/
-/app/android/.gradle/
-/app/android/local.properties
-*.iml
+# Web client
+/web/node_modules/
+/web/dist/
+# The compiled engine, copied in by `make wasm`. Built, not authored.
+/web/public/sketch-route.wasm
 
 # Map data and build artefacts, far too big for git
 /data/
@@ -18,12 +14,6 @@ Cargo.lock
 *.pmtiles
 *.mbtiles
 *.graph
-
-# Signing material. Never commit these.
-*.p12
-*.mobileprovision
-*.cer
-/app/ios/Runner/GoogleService-Info.plist
 
 # Local scratch
 /out/

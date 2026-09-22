@@ -1,0 +1,74 @@
+# Builds and tests the web client.
+#
+# This replaces the flutter and ios workflows. There is no signing step, no
+# macOS runner and no artefact to download and sideload: the deploy job
+# publishes to GitHub Pages and the phone reloads a URL.
+name: web
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          # Kept in step with mise.toml. Change both together.
+          node-version: '26.8.1'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      # The engine has to exist before the tests run: test/engine.test.ts holds
+      # the product promise across the WebAssembly boundary and needs the real
+      # compiled module, not a stub.
+      - name: Build the engine
+        run: make wasm
+
+      - name: Types and lints
+        run: npm run check
+        working-directory: web
+
+      - name: Test
+        run: npm test
+        working-directory: web
+
+      - name: Build
+        run: npm run build
+        working-directory: web
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: web/dist
+
+  # Installing on the phone is opening a URL, so publishing is the whole of
+  # deployment. No signature, no seven-day expiry, no App ID spent.
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

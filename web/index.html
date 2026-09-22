@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <!--
+      viewport-fit=cover lets the layout reach under the notch and the home
+      indicator, which the safe-area insets in style.css then pad back out.
+      user-scalable=no is here for one reason: a two-finger pinch on the drawing
+      overlay must zoom the map, never the page.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+
+    <!--
+      Standalone mode is not decoration. In a Safari tab, a stroke that starts
+      near the left edge is swallowed by the back-swipe gesture, which makes the
+      app feel broken exactly where a right-handed thumb naturally begins. Added
+      to the home screen, that gesture is gone.
+    -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Roadmapped" />
+    <meta name="theme-color" content="#0b0d10" />
+
+    <title>Roadmapped</title>
+    <meta
+      name="description"
+      content="Draw a line on the map with your finger. Get back a real route that follows it."
+    />
+
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

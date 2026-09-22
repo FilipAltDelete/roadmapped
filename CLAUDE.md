@@ -5,45 +5,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project status
 
 The Rust matching engine in `crates/sketch-route/` is written and tested, against a synthetic
-grid: there is no OSM importer yet, so it has never seen real data. The Flutter client in `app/`
-has the drawing surface built and tested, with MapLibre rendering underneath it. The two halves
-are not connected. There is no flutter_rust_bridge seam, so nothing calls the matcher and the
-line the app draws back is the sketch itself, not a route. `ROADMAP.md` is the source of truth
-for scope and phasing, but its checkboxes are stale and the code has overtaken them in places.
+grid: there is no OSM importer yet, so it has never seen real data. The client in `web/` draws a
+line, sends it through `crates/sketch-route-wasm/` to that engine in a Web Worker, and renders the
+route that comes back under the drawn line. The two halves are connected, which is new: the line
+the app draws back is now a route, not the sketch.
 
-The full Android toolchain is installed and verified by an actual debug APK build. Flutter, Java
-and the Android SDK paths are all pinned in `mise.toml`, so entering the directory sets up the
-environment. Nothing needed root. See `docs/setup.md`.
+Nothing has been opened on a phone. The engine's guarantees are verified through WebAssembly in
+`web/test/engine.test.ts`, but no thumb has touched the drawing surface.
 
-iOS builds. The `ios` workflow produces an unsigned arm64 .ipa on a macOS runner, and all three
-workflows pass. Nothing has been signed or installed on a phone yet: SideStore is not set up.
+`ROADMAP.md` is the source of truth for scope and phasing.
+
+The toolchain is Node and Rust. Flutter, Java, the Android SDK, Xcode, SideStore and the macOS CI
+runner are all gone. See `docs/setup.md`.
 
 ## Commands
 
 ```sh
-make test      # Rust and Flutter tests
+make install   # once, fetch the web client's dependencies
+make dev       # run the app locally with hot reload
+make host      # the same, reachable from a phone on the same WiFi
+make wasm      # compile the engine to WebAssembly and copy it where the app fetches it
+make test      # Rust and web tests
 make eval      # score the matcher against the canonical sketches
 make geojson   # same routes written to out/routes.geojson for viewing
-make check     # rustfmt, clippy and flutter analyze, exactly as CI runs them
-make run       # run on a device, needs the Android SDK
+make check     # rustfmt, clippy, tsc and eslint, exactly as CI runs them
+make build     # production bundle into web/dist
 ```
 
 Run one Rust test with `cargo test --manifest-path crates/sketch-route/Cargo.toml <name>`, and one
-Flutter test with `cd app && mise exec -- flutter test --plain-name <name>`.
+web test with `npm --prefix web test -- -t <name>`.
 
-Flutter is pinned in `mise.toml` and duplicated in two CI workflows. Change all three together.
+Node is pinned in `mise.toml` and duplicated in `.github/workflows/web.yml`. Change both together.
 
 **`make eval` is not optional when touching the algorithm.** Capture its output before a change
 and after, and put both in the commit message or the pull request. The four overall numbers are
 mean deviation, worst deviation, mean length ratio, and corridor share.
 
-iOS cannot be built here. This machine is Linux, so the daily loop runs on Android, and iOS builds
-go through the `ios` workflow on a macOS runner. See `docs/setup.md`.
-
 ## Naming
 
-The application is **Roadmapped**, bundle identifier `app.roadmapped`. `ROADMAP.md` is
-the planning document and is unrelated to it.
+The application is **Roadmapped**. `ROADMAP.md` is the planning document and is unrelated to it.
 
 The Rust crate stays `sketch-route`, because it names what the engine does rather than
 what it ships inside.
@@ -62,30 +62,61 @@ cost of line fidelity, fidelity wins.
 
 These were reached through explicit trade-off discussions. Do not silently revisit them.
 
-- **The matcher is Rust, compiled into the app, running on-device.** Not Dart, not a server. It is a
-  graph search over millions of edges where predictable performance matters, and on-device is what
-  makes offline work in the field.
-- **`crates/sketch-route` has no dependencies, deliberately.** It cross-compiles to iOS and Android,
-  where every dependency is a build risk. Adding one needs a reason worth stating in the commit.
-- **The client is Flutter, not native Swift.** The developer works on Linux and has no Mac. Swift
-  would force a cloud build for every iteration. Keep the Dart-to-Rust seam clean via
-  flutter_rust_bridge so a later Swift client can reuse the crate unchanged.
-- **Android is an iteration surface, not a target.** The product target is iPhone. Android exists so
-  the daily loop runs locally on Linux.
-- **Map rendering is MapLibre Native**, with PMTiles for offline-capable tiles.
+- **The app is a web app, installed to the home screen, not a native iOS app.** This was a
+  deliberate reversal. A free Apple Developer account signs a build for seven days, allows ten App
+  IDs a week, has no TestFlight, and cannot build without macOS. A URL has none of those
+  properties. The cost is background location, which the web does not have and will not get; that
+  cost is priced into Phase 4 rather than argued with.
+- **The matcher is Rust, compiled to WebAssembly, running in the browser on the user's phone.** Not
+  TypeScript, not a server. It is a graph search over millions of edges where predictable
+  performance matters, and on-device is what makes offline work in the field.
+- **The search runs in a Web Worker, never on the main thread.** The performance targets are
+  measured in seconds, which is far past the point where a browser reports a page as unresponsive.
+  This is not an optimisation to apply later.
+- **`crates/sketch-route` has no dependencies, deliberately.** It cross-compiles to anywhere, which
+  is what made the pivot to WebAssembly cost nothing. Adding one needs a reason worth stating in
+  the commit.
+- **`crates/sketch-route-wasm` has no dependencies either, and deliberately does not use
+  wasm-bindgen.** Every value crossing the boundary is an `f64`. Hand-written glue costs about
+  eighty lines in `web/src/wasm.ts` and avoids a code generator that must be version-matched to a
+  CLI, which is a standing CI failure. The two files are one ABI and are changed together.
+- **The client is TypeScript with MapLibre GL JS.** The Flutter client was rewritten rather than
+  compiled to web: `flutter build web` would have kept about nine hundred lines of Dart at the cost
+  of a JS-interop map shim, a heavy renderer payload, and poor control over mobile gestures.
+- **Map rendering is MapLibre GL JS**, with PMTiles for offline-capable tiles. PMTiles is better
+  supported here than on native, where the protocol handler is a port rather than the reference
+  implementation.
 - **Valhalla in Docker is scaffolding for Phase 1 only.** It proves the idea via its map-matching
   endpoint, then gets retired once the Rust matcher beats it.
+- **Keep the WebAssembly seam clean.** A native client, Swift or otherwise, would reuse
+  `crates/sketch-route` unchanged through UniFFI. That property is what made this pivot cheap and
+  is worth preserving whether or not it is ever used.
 
-## Constraints from the free Apple Developer account
+## Constraints from the web platform
 
-The developer is on the free tier. These are design inputs, not future paperwork.
+These replace the free-tier Apple constraints entirely. They are design inputs, not future
+paperwork.
 
-- Signed builds stop launching after 7 days. SideStore re-signs on-device over WiFi.
-- **GPX export is not a nice-to-have.** It is the fallback when the app expires in the field, so the
-  route stays openable in OsmAnd or Organic Maps. Do not deprioritize it.
-- Only 10 new App IDs per 7 days, so the bundle identifier must not churn.
-- No TestFlight and no App Store distribution until the yearly fee is paid.
-- iOS builds require a macOS CI runner. The daily loop must not depend on one.
+- **No background location.** `watchPosition` stops firing the moment the page is backgrounded or
+  the screen locks, and there is no API anywhere on the web that changes this: service workers
+  cannot reach geolocation, and Periodic Background Sync is Chromium-only and gives no position.
+  Navigation works with the screen on, held or mounted. In a pocket it stops.
+- **A backgrounded tab can be discarded, not merely paused.** iOS reclaims memory from Safari
+  aggressively, and the user may return to a fresh page load. Nothing may live only in memory:
+  `web/src/store.ts` writes the sketch, the route and the camera to IndexedDB on every change.
+  Every call there degrades to a no-op rather than throwing, because IndexedDB is unavailable in
+  some private-browsing configurations and losing persistence must not mean losing the app.
+- **The graph cannot be memory-mapped.** It loads into WebAssembly linear memory, and Safari will
+  kill a tab long before the 4 GB address space is reached. Region size is bounded by what the
+  phone tolerates, which is a number to measure early rather than assume.
+- **Safari's edge-swipe back gesture eats strokes that start near the left edge.** Standalone mode
+  removes it, which is why `apple-mobile-web-app-capable` is set and why the app asks to be added
+  to the home screen. `touch-action: none` on the drawing overlay is what stops iOS treating a
+  stroke as a scroll.
+- **GPX export is still first-class**, but for a different reason. It was insurance against the
+  app expiring in the field; nothing expires now. It stays because a route that cannot leave the
+  app only works where the app works, and OsmAnd, Organic Maps and a watch are all downstream of
+  it. `navigator.share({files})` reaches the real iOS share sheet.
 
 ## How the matcher works
 
@@ -107,28 +138,69 @@ waypoint does not make a whole sketch unroutable.
 Corridor pruning does the rest. Edges far from the line are dropped before the search begins, which
 is both the performance story and a second guard against shortcuts.
 
+**The ends of the line snap to the network, and the distance is reported.** A finger does not land
+on a path, so refusing to route because a stroke began in a field is not useful. `Graph::
+nearest_node` widens its search until it finds something, the drawn line is extended to meet those
+nodes before the corridor is built (so the connecting leg is inside the corridor rather than pruned
+away), and `MatchResult` carries `start_snap_m` and `goal_snap_m` so the interface can say the line
+was moved. `CostParams::max_snap_m` caps it at 2 km: past that there is no sensible nearest path and
+the honest failure is the right answer, which `snapping_stops_at_the_limit_rather_than_reaching_
+across_the_map` holds in place. Scoring still runs against what the user drew, never the extended
+line, so a long snap stays visible in the metrics instead of being explained away by them.
+
 The integration tests in `crates/sketch-route/tests/follows_the_line.rs` encode the product promise.
 The U-bend case is the headline: endpoints 900 m apart, correct answer 2700 m. If that test starts
 passing for the wrong reason, or gets relaxed, the app no longer does the one thing it exists for.
+`web/test/engine.test.ts` holds the same promise across the WebAssembly boundary, because a matcher
+that is correct under `cargo test` and wrong in a browser is wrong.
 
 ## The client
 
-`app/lib/main.dart` is the drawing surface, with MapLibre rendering under it. The gesture handling
-and point capture were deliberately built against a blank canvas first, because finger drawing is
-the risky part of this app and did not need a map to develop. The map arrived afterwards, leaving
-only the problem that genuinely needs one: drawing competing with pan and zoom.
+`web/src/main.ts` is the drawing surface, with MapLibre rendering under it. `web/src/sketch.ts` is
+the screen-space geometry, kept free of the DOM and of the map so it can be tested without a
+browser. `web/src/ui/controls.ts` is the bottom panel, kept free of both for the same reason: the
+map screen needs a WebGL context and cannot run in a test.
 
 The basemap is a remote style over the network, so the app is online-only for now. PMTiles is what
 makes it work offline, and that is still ahead.
 
+**The synthetic grid is sized to the sketch, not to the viewport.** A fixed grid centred on the map
+centre meant that drawing while zoomed out put the whole line outside the network, and the matcher
+correctly but uselessly reported that there was no path near where the line started. `gridFor` in
+`web/src/matcher.worker.ts` derives the grid from the sketch's bounding box, capped at 120 nodes a
+side so a long line gets a coarser network rather than a hundred thousand nodes. All of this goes
+away with the OSM importer.
+
 **Draw mode is a deliberate toggle, not an inferred gesture.** With a map underneath, a drag means
 either pan or draw and never both. Inferring it from pressure or timing feels clever and fails
-constantly. The widget tests hold this in place, including the case that a drag with draw mode off
-must capture nothing.
+constantly. While draw mode is on, MapLibre's own handlers are disabled and the overlay takes
+pointer events; the rest of the time the overlay is transparent to them. The tests hold this in
+place.
+
+Unlike the Flutter plugin it replaced, `map.unproject` works in CSS pixels, so there is no
+device-pixel-ratio correction to get wrong.
+
+**MapLibre must be told where its own worker is, and says nothing when it is not.** `src/
+maplibre-worker.ts` calls `setWorkerUrl`. MapLibre v6 stopped inlining its worker and derives the
+URL from its own `import.meta.url`, returning an empty string when that is not an `http(s):` URL,
+which under a bundler it never is. The failure is silent and total: the style, the TileJSON and the
+sprite are fetched on the main thread and succeed, tiles and glyphs are fetched by the worker and
+are therefore never requested, `load` never fires, no `error` is emitted, and the map is black. It
+looks exactly like a map centred on unmapped ocean. The import must stay above the first map
+construction, must be `?worker&url` rather than `?url` so Vite bundles the shared chunk the worker
+imports, and is guarded by `web/test/maplibre-worker.test.ts`. Check it first if the map ever goes
+black again, and check it after every MapLibre upgrade.
+
+Map failures are surfaced rather than swallowed. `web/src/ui/banner.ts` checks for WebGL up front
+and `map.on('error')` puts the message on screen, because a black rectangle is otherwise
+indistinguishable from a dark basemap over water.
 
 ## Testing UI on real hardware
 
-The widget tests pin down the logic, not the feel. Finger drawing cannot be validated on a desktop
-or an emulator. A mouse draws thin precise lines. A thumb draws fat jittery ones and covers the map
-while doing it. Any change to draw interaction needs testing on a real phone before it counts as
-done.
+The unit tests pin down the logic, not the feel. Finger drawing cannot be validated on a desktop.
+A mouse draws thin precise lines. A thumb draws fat jittery ones and covers the map while doing it.
+Any change to draw interaction needs testing on a real phone before it counts as done.
+
+`make host` serves the app on the local network so the phone can open it. Test it added to the home
+screen, not in a Safari tab: the tab has a different viewport, a different gesture set, and an
+address bar that resizes under a stroke.

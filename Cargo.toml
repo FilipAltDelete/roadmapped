@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/sketch-route"]
+members = ["crates/sketch-route", "crates/sketch-route-wasm"]
 
 [workspace.package]
 edition = "2021"

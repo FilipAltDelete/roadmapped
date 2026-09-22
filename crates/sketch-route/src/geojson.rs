@@ -1,7 +1,7 @@
 //! Minimal GeoJSON output, for eyeballing results on a map.
 //!
 //! Hand-rolled rather than pulled from a crate, because this library is
-//! cross-compiled to iOS and Android and every dependency is a build risk. The
+//! cross-compiled to WebAssembly and every dependency is a build risk. The
 //! output is only ever consumed by debugging tools, so it stays small.
 
 use crate::polyline::Polyline;

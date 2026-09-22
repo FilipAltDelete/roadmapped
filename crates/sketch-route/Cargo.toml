@@ -6,8 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 description = "Corridor-constrained routing that follows a hand-drawn line instead of taking the fastest path."
 
-# Deliberately dependency-free. This crate is compiled into an iOS and Android app,
-# so every dependency is a cross-compilation risk. Add one only with a reason.
+# Deliberately dependency-free. This crate is compiled to WebAssembly and runs in a
+# browser, and is meant to stay reusable by a native client, so every dependency is a
+# cross-compilation risk. Add one only with a reason.
 [dependencies]
 
 [lib]

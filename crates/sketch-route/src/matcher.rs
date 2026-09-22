@@ -56,15 +56,22 @@ pub struct MatchResult {
     /// hide.
     pub checkpoints_skipped: usize,
     pub checkpoints_total: usize,
+    /// How far the start of the line was moved to reach the network, in metres.
+    ///
+    /// Zero when the line already began on a path. Anything large is a
+    /// compromise the user should be told about rather than left to notice.
+    pub start_snap_m: f64,
+    /// The same for the end of the line.
+    pub goal_snap_m: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MatchError {
     /// Fewer than two points, so there is no line to follow.
     SketchTooShort,
-    /// Nothing routable near where the line begins.
+    /// Nothing routable within `max_snap_m` of where the line begins.
     NoStartNode,
-    /// Nothing routable near where the line ends.
+    /// Nothing routable within `max_snap_m` of where the line ends.
     NoGoalNode,
     /// The corridor is empty, usually because the sketch is nowhere near the graph.
     EmptyCorridor,
@@ -135,22 +142,48 @@ pub fn match_sketch(graph: &Graph, req: &MatchRequest) -> Result<MatchResult, Ma
     }
 
     let params = req.params;
-    let corridor = Corridor::build(graph, sketch, params.corridor_width_m, params.prune_factor);
+
+    // Snap the ends to the network before anything else.
+    //
+    // A finger does not land on a path. Refusing to route because a stroke
+    // began in a field is not useful, so the ends move to the nearest node and
+    // the distance travelled is reported back rather than hidden.
+    let (start_node, start_snap_m) = graph
+        .nearest_node(sketch.first().unwrap(), params.max_snap_m)
+        .ok_or(MatchError::NoStartNode)?;
+    let (goal_node, goal_snap_m) = graph
+        .nearest_node(sketch.last().unwrap(), params.max_snap_m)
+        .ok_or(MatchError::NoGoalNode)?;
+    let goal_pos = graph.node(goal_node);
+
+    // The line the search actually works against, extended to meet the network
+    // at both ends. The corridor and the checkpoints are built from this, so
+    // the leg between the drawing and the nearest path is inside the corridor
+    // instead of being pruned away as an excursion.
+    //
+    // Scoring still happens against what the user drew, not against this, which
+    // is what keeps a long snap visible in the metrics rather than explained
+    // away by them.
+    let routing_line = extend_to_network(
+        sketch,
+        graph.node(start_node),
+        goal_pos,
+        start_snap_m,
+        goal_snap_m,
+    );
+
+    let corridor = Corridor::build(
+        graph,
+        &routing_line,
+        params.corridor_width_m,
+        params.prune_factor,
+    );
     if corridor.edges_inside() == 0 {
         return Err(MatchError::EmptyCorridor);
     }
 
-    let cps = checkpoints(sketch, params.checkpoint_spacing_m);
+    let cps = checkpoints(&routing_line, params.checkpoint_spacing_m);
     let total = cps.len();
-    let snap_radius = params.corridor_width_m * params.prune_factor;
-
-    let start_node = graph
-        .nearest_node_within(sketch.first().unwrap(), snap_radius)
-        .ok_or(MatchError::NoStartNode)?;
-    let goal_node = graph
-        .nearest_node_within(sketch.last().unwrap(), snap_radius)
-        .ok_or(MatchError::NoGoalNode)?;
-    let goal_pos = graph.node(goal_node);
 
     // Straight-line distance to the goal.
     //
@@ -183,7 +216,15 @@ pub fn match_sketch(graph: &Graph, req: &MatchRequest) -> Result<MatchResult, Ma
         }
 
         if state.node == goal_node && state.cp as usize >= total {
-            return Ok(reconstruct(graph, &came, start_state, state, g, total));
+            return Ok(reconstruct(
+                graph,
+                &came,
+                start_state,
+                state,
+                g,
+                total,
+                (start_snap_m, goal_snap_m),
+            ));
         }
 
         // Give up on the next checkpoint and carry on.
@@ -245,6 +286,7 @@ fn reconstruct(
     goal: State,
     cost: f64,
     total: usize,
+    snap: (f64, f64),
 ) -> MatchResult {
     let mut edges = Vec::new();
     let mut skipped = 0usize;
@@ -276,5 +318,35 @@ fn reconstruct(
         cost,
         checkpoints_skipped: skipped,
         checkpoints_total: total,
+        start_snap_m: snap.0,
+        goal_snap_m: snap.1,
     }
+}
+
+/// The drawn line with its ends pulled onto the network.
+///
+/// A snap shorter than a metre is left alone: the point is already on a node in
+/// every sense that matters, and prepending a duplicate would only add a
+/// zero-length segment for the corridor to measure against.
+fn extend_to_network(
+    sketch: &Polyline,
+    start: LatLng,
+    goal: LatLng,
+    start_snap_m: f64,
+    goal_snap_m: f64,
+) -> Polyline {
+    const NEGLIGIBLE_M: f64 = 1.0;
+    if start_snap_m <= NEGLIGIBLE_M && goal_snap_m <= NEGLIGIBLE_M {
+        return sketch.clone();
+    }
+
+    let mut points = Vec::with_capacity(sketch.len() + 2);
+    if start_snap_m > NEGLIGIBLE_M {
+        points.push(start);
+    }
+    points.extend_from_slice(&sketch.points);
+    if goal_snap_m > NEGLIGIBLE_M {
+        points.push(goal);
+    }
+    Polyline::new(points)
 }
